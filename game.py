@@ -6,66 +6,25 @@ import os
 from datetime import datetime
 import base64
 from pathlib import Path
-import numpy as np
-import io
-import wave
 
 # ============ CONFIGURATION ============
 LEADERBOARD_FILE = "leaderboard.json"
 MAX_LEADERBOARD_ENTRIES = 10
 
 # ============ AUDIO GENERATION FUNCTIONS ============
-
-def freq_from_number(number, min_num=1, max_num=100):
-    """
-    Convert a number to a frequency (Hz)
-    Lower number = lower pitch, Higher number = higher pitch
-    Maps the number range to frequency range (200 Hz to 2000 Hz)
-    """
-    min_freq = 200  # Very low pitch
-    max_freq = 2000  # Very high pitch
-    
-    # Normalize the number to 0-1 range
-    normalized = (number - min_num) / (max_num - min_num)
-    
-    # Map to frequency range (using exponential scale for better sound)
-    frequency = min_freq * (max_freq / min_freq) ** normalized
-    return frequency
-
-def generate_pitch_sound(frequency=1000, duration=0.5):
-    """Generate a pure tone at specified frequency"""
-    sample_rate = 44100
-    t = np.linspace(0, duration, int(sample_rate * duration))
-    wave_data = np.sin(2 * np.pi * frequency * t)
-    
-    # Add envelope to avoid clicks (fade in/out)
-    envelope = np.ones_like(t)
-    fade_samples = int(sample_rate * 0.05)  # 50ms fade
-    envelope[:fade_samples] = np.linspace(0, 1, fade_samples)
-    envelope[-fade_samples:] = np.linspace(1, 0, fade_samples)
-    
-    wave_data = wave_data * envelope
-    audio_data = (wave_data * 32767).astype(np.int16)
-    return audio_data
-
-def generate_guess_feedback_sound(guess_number, max_num=100):
-    """
-    Generate sound based on guess number
-    Lower guesses = lower pitch, Higher guesses = higher pitch
-    """
-    frequency = freq_from_number(guess_number, 1, max_num)
-    return generate_pitch_sound(frequency, duration=0.6)
-
 def generate_beep_sound(frequency=1000, duration=0.2):
     """Generate a beep sound using numpy"""
+    import numpy as np
     sample_rate = 44100
     t = np.linspace(0, duration, int(sample_rate * duration))
     wave = np.sin(2 * np.pi * frequency * t)
+    # Normalize to 16-bit audio
     audio_data = (wave * 32767).astype(np.int16)
     return audio_data
 
 def generate_success_sound():
-    """Generate a success/winning sound (ascending notes)"""
+    """Generate a success/winning sound"""
+    import numpy as np
     sample_rate = 44100
     duration = 0.5
     
@@ -75,6 +34,7 @@ def generate_success_sound():
     for freq in frequencies:
         t = np.linspace(0, duration / 3, int(sample_rate * duration / 3))
         wave = np.sin(2 * np.pi * freq * t)
+        # Add envelope
         envelope = np.linspace(1, 0, len(wave))
         wave = wave * envelope
         audio = np.concatenate([audio, wave])
@@ -83,7 +43,8 @@ def generate_success_sound():
     return audio_data
 
 def generate_failure_sound():
-    """Generate a failure/wrong sound (descending notes)"""
+    """Generate a failure/wrong sound"""
+    import numpy as np
     sample_rate = 44100
     duration = 0.4
     
@@ -102,10 +63,12 @@ def generate_failure_sound():
 
 def generate_click_sound():
     """Generate a click/tap sound"""
+    import numpy as np
     sample_rate = 44100
     duration = 0.1
     
     t = np.linspace(0, duration, int(sample_rate * duration))
+    # Create a short click sound
     wave = np.sin(2 * np.pi * 800 * t)
     envelope = np.exp(-5 * t)
     wave = wave * envelope
@@ -115,6 +78,11 @@ def generate_click_sound():
 
 def audio_to_html(audio_data, autoplay=False):
     """Convert audio data to HTML audio element"""
+    import numpy as np
+    from scipy import signal
+    import io
+    import wave
+    
     sample_rate = 44100
     
     # Create WAV file in memory
@@ -151,8 +119,6 @@ if 'game_state' not in st.session_state:
     st.session_state.sound_enabled = True
     st.session_state.combo = 0
     st.session_state.perfect_game = False
-    st.session_state.feedback_sound_enabled = True
-    st.session_state.max_range = 100
 
 # ============ PAGE CONFIG ============
 st.set_page_config(
@@ -318,17 +284,6 @@ st.markdown("""
         animation: fillProgress 0.6s ease-out;
     }
     
-    .frequency-info {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 15px;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        margin: 10px 0;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-        border: 2px solid rgba(255, 255, 255, 0.2);
-    }
-    
     @keyframes titlePulse {
         0%, 100% { transform: scale(1); opacity: 1; }
         50% { transform: scale(1.05); opacity: 0.8; }
@@ -467,15 +422,12 @@ def start_game(difficulty):
     if difficulty == 'easy':
         st.session_state.target_number = random.randint(1, 50)
         st.session_state.max_attempts = 15
-        st.session_state.max_range = 50
     elif difficulty == 'medium':
         st.session_state.target_number = random.randint(1, 100)
         st.session_state.max_attempts = 10
-        st.session_state.max_range = 100
     elif difficulty == 'hard':
         st.session_state.target_number = random.randint(1, 500)
         st.session_state.max_attempts = 8
-        st.session_state.max_range = 500
     
     st.session_state.game_state = 'playing'
     st.session_state.guesses = []
@@ -490,8 +442,8 @@ def start_game(difficulty):
         try:
             sound = generate_click_sound()
             st.audio(audio_to_html(sound, autoplay=True), format='audio/wav')
-        except Exception as e:
-            st.warning(f"Could not play sound: {str(e)}")
+        except:
+            pass
 
 def check_guess(guess):
     """Check the player's guess"""
@@ -499,8 +451,11 @@ def check_guess(guess):
         guess_num = int(guess)
         
         # Validate range
-        if guess_num < 1 or guess_num > st.session_state.max_range:
-            st.warning(f"❌ Please enter a number between 1 and {st.session_state.max_range}!")
+        max_range = 50 if st.session_state.difficulty == 'easy' else \
+                   100 if st.session_state.difficulty == 'medium' else 500
+        
+        if guess_num < 1 or guess_num > max_range:
+            st.warning(f"❌ Please enter a number between 1 and {max_range}!")
             return False
         
         # Check if already guessed
@@ -509,14 +464,6 @@ def check_guess(guess):
             return False
         
         st.session_state.guesses.append(guess_num)
-        
-        # Play pitch sound based on guess number
-        if st.session_state.sound_enabled and st.session_state.feedback_sound_enabled:
-            try:
-                sound = generate_guess_feedback_sound(guess_num, st.session_state.max_range)
-                st.audio(audio_to_html(sound, autoplay=True), format='audio/wav')
-            except Exception as e:
-                pass
         
         # Check if correct
         if guess_num == st.session_state.target_number:
@@ -566,6 +513,13 @@ def check_guess(guess):
         else:
             # Wrong guess but game continues
             st.session_state.combo += 1
+            if st.session_state.sound_enabled:
+                try:
+                    sound = generate_failure_sound()
+                    st.audio(audio_to_html(sound, autoplay=True), format='audio/wav')
+                except:
+                    pass
+            
             return False
     
     except ValueError:
@@ -607,14 +561,6 @@ with st.sidebar:
     with col2:
         st.session_state.sound_enabled = st.toggle("ON", value=st.session_state.sound_enabled)
     
-    # Feedback sound toggle
-    if st.session_state.sound_enabled:
-        st.session_state.feedback_sound_enabled = st.checkbox(
-            "🎵 Pitch Feedback (Higher = Bigger Number)",
-            value=st.session_state.feedback_sound_enabled,
-            help="Play different pitch based on your guess number"
-        )
-    
     st.markdown("---")
     st.write("### 📊 Game Statistics")
     
@@ -644,11 +590,6 @@ with st.sidebar:
         2. Computer picks a random number
         3. Guess the number in limited attempts
         4. Get hints: ⬆️ too low, ⬇️ too high
-        
-        🎵 **Audio Feedback:**
-        - Lower guesses = Lower pitch sounds
-        - Higher guesses = Higher pitch sounds
-        - Example: Guessing 50 = Medium pitch sound
         
         ⭐ **Win Conditions:**
         - Guess correctly before attempts run out
@@ -701,39 +642,11 @@ if st.session_state.game_state == 'menu':
     <div class="game-card">
         <h3>💡 Pro Tips</h3>
         <p>💭 Think strategically - each guess gives you valuable information!</p>
-        <p>🎵 Listen to the pitch feedback - higher sounds mean bigger numbers!</p>
         <p>🎯 Try to narrow down the range with each guess</p>
         <p>⚡ Speed matters - complete faster for potential bonus points</p>
         <p>⭐ Guess right on the first try for a PERFECT game!</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Audio demonstration section
-    st.write("---")
-    st.write("### 🎵 Pitch Demonstration")
-    
-    demo_col1, demo_col2, demo_col3 = st.columns(3)
-    
-    with demo_col1:
-        st.write("**Low Pitch (Number = 10)**")
-        low_sound = generate_guess_feedback_sound(10, 100)
-        st.audio(audio_to_html(low_sound, autoplay=False), format='audio/wav')
-        freq_low = freq_from_number(10, 1, 100)
-        st.caption(f"Frequency: ~{freq_low:.0f} Hz 🔉")
-    
-    with demo_col2:
-        st.write("**Medium Pitch (Number = 50)**")
-        med_sound = generate_guess_feedback_sound(50, 100)
-        st.audio(audio_to_html(med_sound, autoplay=False), format='audio/wav')
-        freq_med = freq_from_number(50, 1, 100)
-        st.caption(f"Frequency: ~{freq_med:.0f} Hz 🔊")
-    
-    with demo_col3:
-        st.write("**High Pitch (Number = 100)**")
-        high_sound = generate_guess_feedback_sound(100, 100)
-        st.audio(audio_to_html(high_sound, autoplay=False), format='audio/wav')
-        freq_high = freq_from_number(100, 1, 100)
-        st.caption(f"Frequency: ~{freq_high:.0f} Hz 🔉")
     
     # Leaderboard section
     st.write("---")
@@ -762,19 +675,15 @@ elif st.session_state.game_state == 'playing':
             st.write("**📝 Your Guesses:**")
             guesses_str = ", ".join(f"🔹{g}" for g in st.session_state.guesses)
             st.write(guesses_str)
-            
-            # Show frequency of latest guess
-            if st.session_state.guesses:
-                last_guess = st.session_state.guesses[-1]
-                freq = freq_from_number(last_guess, 1, st.session_state.max_range)
-                st.markdown(f'<div class="frequency-info">🎵 Last Guess Frequency: ~{freq:.0f} Hz</div>', unsafe_allow_html=True)
     
     # Main game area
+    max_range = 50 if st.session_state.difficulty == 'easy' else \
+               100 if st.session_state.difficulty == 'medium' else 500
+    
     st.markdown(f"""
     <div class="game-card">
         <h2>🎯 Guess the Number!</h2>
-        <h3>Range: 1 to {st.session_state.max_range}</h3>
-        <p>🎵 Listen to the pitch! Higher number = Higher pitch sound</p>
+        <h3>{1} to {max_range}</h3>
     </div>
     """, unsafe_allow_html=True)
     
@@ -784,8 +693,8 @@ elif st.session_state.game_state == 'playing':
         guess_input = st.number_input(
             "Enter your guess:",
             min_value=1,
-            max_value=st.session_state.max_range,
-            value=st.session_state.max_range // 2,
+            max_value=max_range,
+            value=max_range // 2,
             step=1,
             label_visibility="collapsed"
         )
@@ -803,12 +712,12 @@ elif st.session_state.game_state == 'playing':
         
         if last_guess < st.session_state.target_number:
             st.markdown(
-                f'<div class="feedback-good">📈 {last_guess} is too LOW! Try higher numbers (Higher pitch)</div>',
+                f'<div class="feedback-good">📈 {last_guess} is too LOW!</div>',
                 unsafe_allow_html=True
             )
         elif last_guess > st.session_state.target_number:
             st.markdown(
-                f'<div class="feedback-bad">📉 {last_guess} is too HIGH! Try lower numbers (Lower pitch)</div>',
+                f'<div class="feedback-bad">📉 {last_guess} is too HIGH!</div>',
                 unsafe_allow_html=True
             )
     
@@ -834,7 +743,7 @@ elif st.session_state.game_state == 'game_over':
         
         # Celebrate emoji rain
         emojis = ['🎉', '⭐', '🎯', '🏆', '✨', '🌟']
-        for _ in range(3):
+        for _ in range(5):
             st.write(" ".join([f"<span class='emoji-rain'>{random.choice(emojis)}</span>" for _ in range(8)]), unsafe_allow_html=True)
         
         st.write("---")
@@ -864,8 +773,7 @@ elif st.session_state.game_state == 'game_over':
         cols = st.columns(min(len(st.session_state.guesses), 5))
         for i, guess in enumerate(st.session_state.guesses):
             with cols[i % 5]:
-                freq = freq_from_number(guess, 1, st.session_state.max_range)
-                st.markdown(f'<div class="stat-card"><h3>🔹</h3><h2>{guess}</h2><p>~{freq:.0f}Hz</p></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><h3>🔹</h3><h2>{guess}</h2></div>', unsafe_allow_html=True)
         
         st.write("---")
         
